@@ -1,16 +1,5 @@
 #### !!!! PCKL FILES
 # Ignore only specific files
-Videos/input/dataframes/*.pkl
-Videos/input/cholec80/dataframes/*.crdownload
-Videos/input/cholec80/dataframes/*.pkl
-logs/*.zip
-
-# Ensure folders are included
-!Videos/
-!Videos/input/
-!Videos/input/dataframes/
-!Videos/input/cholec80/dataframes/
-!logs/
 
 
 
