@@ -1,0 +1,26 @@
+module : cnn.feature_extraction.FeatureExtraction
+model : cnn.TwoHeadResNet50Model
+data_root : Videos/input/
+dataset : cholec80_feature_extract.Cholec80FeatureExtract
+out_features : 7
+input_height : 224
+input_width : 224
+batch_size : 1000
+fps_sampling : 1
+fps_sampling_test : 1
+learning_rate : 0.0005
+dataset_mode : img_multilabel
+early_stopping_metric : val_loss
+pretrained : True
+save_top_k : 1
+max_epochs : 5 # 30
+min_epochs : 6 # 20
+num_tasks : 2
+num_sanity_val_steps : 4
+test_extract : True
+#accelerator: ddp_spawn
+num_workers : 10
+gpus : 1 # all available -1
+###resume_from_checkpoint : 
+##/home/jovyan/TeCNO/logs/250602-110750_FeatureExtraction_Cholec80FeatureExtract_cnn_TwoHeadResNet50Model/checkpoints
+
