@@ -1,11 +1,9 @@
 #### !!!! PCKL FILES
-# Ignore large pkl files
-Videos/input/dataframes/*.pkl
-Videos/input/cholec80/dataframes/*.crdownload
-
 # Ignore huge files
 Videos/input/dataframes/*.pkl
 Videos/input/cholec80/dataframes/*.crdownload
+Videos/input/cholec80/dataframes/*.pkl
+logs/*.zip
 
 
 
