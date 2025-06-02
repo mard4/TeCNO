@@ -1,35 +1,144 @@
-import re
+import configargparse
 from pathlib import Path
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+import logging
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+import os
 
-def pad_cholec80_pickles(base_export_dir):
+from utils.utils import (
+    argparse_summary,
+    get_class_by_path,
+)
+from utils.configargparse_arguments import build_configargparser
+from datetime import datetime
+
+logging.disable(logging.WARNING)
+
+#SEED = 2334
+#torch.manual_seed(SEED)
+#np.random.seed(SEED)
+
+
+def train(hparams, ModuleClass, ModelClass, DatasetClass, logger):
     """
-    Walks through each <fps>fps subfolder under base_export_dir, finds any
-    'video_<N>_<fps>fps.pkl' where N is a single digit, and renames it to
-    'video_0<N>_<fps>fps.pkl'.
+    Main training routine specific for this project
+    :param hparams:
     """
-    base = Path(base_export_dir)
-    if not base.exists():
-        raise ValueError(f"{base_export_dir} does not exist")
+    # ------------------------
+    # 1 INIT LIGHTNING MODEL
+    # ------------------------
+    # load model
+    model = ModelClass(hparams=hparams)
+    # load dataset
+    dataset = DatasetClass(hparams=hparams)
+    # load module
+    module = ModuleClass(hparams, model, dataset)
 
-    # pattern to match single‐digit filenames like "video_8_1.0fps.pkl"
-    single_digit_re = re.compile(r"^video_(\d)_(\d+\.\d+)fps\.pkl$")
-    # iterate over all subdirectories named "*fps"
-    for fps_folder in base.iterdir():
-        if not fps_folder.is_dir() or not fps_folder.name.endswith("fps"):
-            continue
+    # ------------------------
+    # 3 INIT TRAINER --> continues training
+    # ------------------------
+    checkpoint_callback = ModelCheckpoint(
+        # build a path like: /home/jovyan/TeCNO/logs/.../checkpoints/epoch=03-max_score=0.87.ckpt
+        filepath=os.path.join(
+            hparams.output_path,
+            "checkpoints",
+            f"{hparams.name}" + "-{epoch:02d}-{"+hparams.early_stopping_metric+":.2f}"
+        ),
+        verbose=True,
+        monitor=hparams.early_stopping_metric,
+        mode='max'
+    )
+    early_stop_callback = EarlyStopping(
+        monitor=hparams.early_stopping_metric,
+        min_delta=0.00,
+        patience=3,
+        mode='max')
 
-        for pkl in fps_folder.iterdir():
-            m = single_digit_re.match(pkl.name)
-            if m:
-                digit, fps_str = m.groups()
-                old_name = pkl
-                new_name = fps_folder / f"video_{int(digit):02d}_{fps_str}fps.pkl"
-                print(f"Renaming {old_name.name} → {new_name.name}")
-                old_name.rename(new_name)
+
+    trainer = Trainer(
+        gpus=hparams.gpus,
+        logger=logger,
+        fast_dev_run=hparams.fast_dev_run,
+        min_epochs=hparams.min_epochs,
+        max_epochs=hparams.max_epochs,
+        checkpoint_callback=checkpoint_callback,
+        resume_from_checkpoint=hparams.resume_from_checkpoint,
+        callbacks=[early_stop_callback],
+        weights_summary='full',
+        num_sanity_val_steps=hparams.num_sanity_val_steps,
+        #log_every_n_steps=hparams.log_every_n_steps
+        log_save_interval=hparams.log_every_n_steps,
+    )
+    # ------------------------
+    # 4 START TRAINING
+    # ------------------------
+
+    trainer.fit(module)
+    print(
+        f"Best: {checkpoint_callback.best_model_score} | monitor: {checkpoint_callback.monitor} | path: {checkpoint_callback.best_model_path}"
+        f"\nTesting..."
+    )
+    #trainer.test(ckpt_path=checkpoint_callback.best_model_path)
+    try:
+        trainer.test(module, ckpt_path=checkpoint_callback.best_model_path)
+    except Exception as e:
+        print(f"[Warning] Testing failed with error:\n  {e}\nProceeding without running `trainer.test`.")
+
 
 
 if __name__ == "__main__":
-    # Adjust this path to wherever your cholec80_pickle_export folder is
-    # For example: "/home/jovyan/TeCNO/logs/.../cholec80_pickle_export"
-    export_dir = "logs/250602-110750_FeatureExtraction_Cholec80FeatureExtract_cnn_TwoHeadResNet50Model/cholec80_pickle_export"
-    pad_cholec80_pickles(export_dir)
+    # ------------------------
+    # TRAINING ARGUMENTS
+    # ------------------------
+    # these are project-wide arguments
+
+    root_dir = Path(__file__).parent
+    parser = configargparse.ArgParser(
+        config_file_parser_class=configargparse.YAMLConfigFileParser)
+    parser.add('-c', is_config_file=True, help='config file path')
+    parser, hparams = build_configargparser(parser)
+
+    # each LightningModule defines arguments relevant to it
+    # ------------------------
+    # LOAD MODULE
+    # ------------------------
+    module_path = f"modules.{hparams.module}"
+    ModuleClass = get_class_by_path(module_path)
+    parser = ModuleClass.add_module_specific_args(parser)
+    # ------------------------
+    # LOAD MODEL
+    # ------------------------
+    model_path = f"models.{hparams.model}"
+    ModelClass = get_class_by_path(model_path)
+    parser = ModelClass.add_model_specific_args(parser)
+    # ------------------------
+    # LOAD DATASET
+    # ------------------------
+    dataset_path = f"datasets.{hparams.dataset}"
+    DatasetClass = get_class_by_path(dataset_path)
+    parser = DatasetClass.add_dataset_specific_args(parser)
+    # ------------------------
+    #  PRINT PARAMS & INIT LOGGER
+    # ------------------------
+    hparams = parser.parse_args()
+    # setup logging
+
+    exp_name = (hparams.module.split(".")[-1] + "_" + hparams.dataset.split(".")[-1] + "_" + hparams.model.replace(".",
+        "_"))
+    date_str = datetime.now().strftime("%y%m%d-%H%M%S_")
+    hparams.name = date_str + exp_name
+    hparams.output_path = Path(hparams.output_path).absolute() / hparams.name
+
+    tb_logger = TensorBoardLogger(hparams.output_path, name='tb')
+    wandb_logger = WandbLogger(name = hparams.name, project="tecno")
+
+    argparse_summary(hparams, parser)
+    print('Output path: ', hparams.output_path)
+
+
+    loggers = [tb_logger, wandb_logger]
+    # ---------------------
+    # RUN TRAINING
+    # ---------------------
+    train(hparams, ModuleClass, ModelClass, DatasetClass, loggers)
